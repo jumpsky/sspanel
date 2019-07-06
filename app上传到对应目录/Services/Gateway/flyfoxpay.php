@@ -4,6 +4,85 @@ use App\Services\View;
 use App\Services\Auth;
 use App\Services\Config;
 use App\Models\Paylist;
+
+class Pays
+{
+    private $pid;
+    private $key;
+
+    public function __construct($pid, $key)
+    {
+        $this->pid = $pid;
+        $this->key = $key;
+    }
+
+    /**
+     * @Note  支付发起
+     * @param $type   支付方式
+     * @param $out_trade_no     订单号
+     * @param $notify_url     异步通知地址
+     * @param $return_url     回调通知地址
+     * @param $name     商品名称
+     * @param $money     金额
+     * @param $sitename     站点名称
+     * @return string
+     */
+    public function submit($type, $out_trade_no, $notify_url, $return_url, $name, $money, $sitename)
+    {
+        $data = [
+            'pid' => $this->pid,
+            'type' => $type,
+            'out_trade_no' => $out_trade_no,
+            'notify_url' => $notify_url,
+            'return_url' => $return_url,
+            'name' => $name,
+            'money' => $money,
+            'sitename' => $sitename
+        ];
+        $string = http_build_query($data);
+        $sign = $this->getsign($data);
+        return 'https://pay.ncepay.com/submit.php?' . $string . '&sign=' . $sign . '&sign_type=MD5';
+    }
+
+    /**
+     * @Note   验证签名
+     * @param $data  待验证参数
+     * @return bool
+     */
+    public function verify($data)
+    {
+        if (!isset($data['sign']) || !$data['sign']) {
+            return false;
+        }
+        $sign = $data['sign'];
+        unset($data['sign']);
+        unset($data['sign_type']);
+        $sign2 = $this->getSign($data, $this->key);
+        if ($sign != $sign2) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * @Note  生成签名
+     * @param $data   参与签名的参数
+     * @return string
+     */
+    private function getSign($data)
+    {
+        $data = array_filter($data);
+        ksort($data);
+        $str1 = '';
+        foreach ($data as $k => $v) {
+            $str1 .= '&' . $k . "=" . $v;
+        }
+        $str = $str1 . $this->key;
+        $str = trim($str, '&');
+        $sign = md5($str);
+        return $sign;
+    }
+}
 class flyfoxpay extends AbstractPayment
 {
 
@@ -21,22 +100,33 @@ class flyfoxpay extends AbstractPayment
         $pl->total = $price;
         $pl->tradeno = self::generateGuid();
         $pl->save();
-      if($type=='wxpay'){$typesss='o_wxpay';}elseif($type=='alipay'){$typesss='o_alipay';}
-        $ffaccount=$settings['mail'];
-        $ffkey=md5($settings['key']);
-        $ffmchid = $settings['hid'];
-		$fftype = 'all';
-		$fftrade = $pl->tradeno;
-	    $ffcny = $price*5.6;
-        $data = [
-            'mail' => $settings['mail'],
-			'hid' => $settings['hid'],
-			'type' => 'all',
-			'trade' => $pl->tradeno,
-			'cny' => $price,
-        ];
-        $return='https://'.$_SERVER['HTTP_HOST'].'/flyfoxpay_back/'.$type;
-        $url="https://api.flyfoxpay.com/api/?mail=".$ffaccount."&id=".$ffmchid."&keys=".$ffkey."&type=".$typesss."&trade_no=".time()."&amount=".$ffcny."&trade_name=".time()."&return=".$return."&go=1&customize1=".$pl->tradeno;
+		$return='https://'.$_SERVER['HTTP_HOST'].'/flyfoxpay_back/'.$type;
+		$pay = new Pays($settings['hid'], $settings['key']);
+
+//支付方式
+$type = 'all';
+
+//订单号
+$out_trade_no = $pl->tradeno;
+
+//异步通知地址
+$notify_url = $return;
+
+//回调通知地址
+$return_url = $return;
+
+//商品名称
+$name = 'SS商品-'.$_SERVER['HTTP_HOST'];
+
+//支付金额（保留小数点后两位）
+$money = $price;
+
+//站点名称
+$sitename = $_SERVER['HTTP_HOST'];
+
+//发起支付
+$url = $pay->submit($type, $out_trade_no, $notify_url, $return_url, $name, $money, $sitename);
+      
 		$result = "<script language='javascript' type='text/javascript'>window.location.href='".$url."';</script>";
         $result = json_encode(array('code'=>$result,'errcode'=>0,'pid' =>$pl->id));
         return $result;
@@ -46,71 +136,29 @@ class flyfoxpay extends AbstractPayment
     {
 		$type = $args['type'];
 		$settings = Config::get("flyfoxpay")['config'];
-        $security['orderid'] = $_REQUEST['orderid'];
+        $security['orderid'] = $_REQUEST['out_trade_no'];
       if($security['orderid']=='' OR $security['orderid']==null){header("Location: /user/code");}else{
-//手续费
-$fee = 0;
-$url = "https://api.flyfoxpay.com/api/check/";//API位置
- 
-$ch = curl_init();
-curl_setopt($ch, CURLOPT_URL, $url);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:38.0) Gecko/20100101 Firefox/38.0');
-curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(
- array("key"=>$settings["key"], //商家KEY
-       "id"=>$settings['hid'], //商家ID
-       "mail"=>$settings['mail'], //商家EMAIL
-       "trade_no"=>$security['orderid'], //商家訂單ID
-       ))); 
-$output = curl_exec($ch); 
-curl_close($ch);
-/*
-回傳格式:
-//成功
-{"status":"200","status_trade":"noapy","sign":"90e5f1f7ef87cd2e43729ba4378656b5"}
-{"status":"200","trade_no":"1278217527512","type":"o_alipay","status_trade":"payok","sign":"*****"}
-//以下為錯誤項目
-{"status":"404","error":"未設置KEY或是ID或MAIL"}
-{"status":"400","error":"請檢查ID或是KEY或MAIL是否有誤"}
-{"status":"416","error":"請檢查訂單ID是否有誤"}
-*/ 
-$security1  = array();
+		  //实例化支付类
+$pay = new Pays($settings['hid'], $settings['key']);
 
-$security1['mchid']      = $settings['hid'];//商家ID
+//接收异步通知数据
+$data = $_GET;
 
-$security1['status']        = "7";//驗證，請勿更改
+//商户订单号
+$out_trade_no = $data['out_trade_no'];
 
-$security1['mail']      = $settings['mail'];//商家EMAIL
-
-$security1['trade_no']      = $security['orderid'];//商家訂單ID
-
-$o='';	      
-	      
-foreach ($security1 as $k=>$v)
-
-{
-
-    $o.= "$k=".($v)."&";
-
+//验证签名
+if ($pay->verify($data)) {
+    //验证支付状态
+    if ($data['trade_status'] == 'TRADE_SUCCESS') {
+        $this->postPayment($data['out_trade_no'], "在线支付");
+		header("Location: /user/code");
+        //这里就可以放心的处理您的业务流程了
+        //您可以通过上面的商户订单号进行业务流程处理
+    }
+} else {
+    echo '錯誤';
 }
-
-$sign1 = md5(substr($o,0,-1).$settings["key"]);//**********請替換成商家KEY
-$json=json_decode($output, true);
-if($json['sign']==$sign1){
-  if($json['status_trade']=="payok"){
-           $this->postPayment($json['customize1'], "在线支付");
-         if($_POST['orderid']!=='' OR $_POST['orderid']!==null){
-               header('Content-Type: application/json');
-               echo '{"ok":"ok"}';}else{
-               echo 'success';
-               header("Location: /user/code");}
-
-        }elseif($json['status_trade']=="payokbaterror"){
-           echo '验证失败，payokbaterror';
-        }}else{
-           echo '验证失败';
-        }
     }}
     public function getPurchaseHTML()
     {
@@ -122,7 +170,7 @@ if($json['sign']==$sign1){
 											<ul class="nav nav-list">
 											
 													<li>
-														<a class="waves-attach waves-effect type active" data-toggle="tab" data-pay="wxpay">翔狐支付</a>
+														<a class="waves-attach waves-effect type active" data-toggle="tab" data-pay="wxpay">聚合支付</a>
 													</li>
 											
 											
@@ -171,7 +219,7 @@ if($json['sign']==$sign1){
 					pid = data.pid;
 					if(type=="wxpay"){
 						$("#result").modal();
-						$("#msg").html("正在跳转到翔狐支付系統..."+data.code);
+						$("#msg").html("正在跳转到支付系統..."+data.code);
 					}
 				}
 			}
