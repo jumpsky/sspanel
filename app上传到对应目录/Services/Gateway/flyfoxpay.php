@@ -152,6 +152,7 @@ if ($pay->verify($data)) {
     //验证支付状态
     if ($data['trade_status'] == 'TRADE_SUCCESS') {
         $this->postPayment($data['out_trade_no'], "在线支付");
+	    echo "success";
 		header("Location: /user/code");
         //这里就可以放心的处理您的业务流程了
         //您可以通过上面的商户订单号进行业务流程处理
